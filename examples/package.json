@@ -1,0 +1,12 @@
+{
+  "name": "mcp-transport-bridge-examples",
+  "version": "0.1.0",
+  "description": "Examples for MCP Transport Bridge",
+  "type": "module",
+  "scripts": {
+    "start": "node simple-bridge.js"
+  },
+  "dependencies": {
+    "mcp-transport-bridge": "file:.."
+  }
+}
