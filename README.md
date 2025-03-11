@@ -1,3 +1,6 @@
+# DISCLAIMER
+This tool is still in development and not yet for intended for use
+
 # MCP Transport Bridge
 
 A bridge between different MCP transport protocols that enables seamless integration with existing implementations.
