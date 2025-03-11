@@ -1,6 +1,8 @@
 # MCP Transport Bridge
 
 A bridge between different MCP transport protocols that enables seamless integration with existing implementations.
+![image](https://github.com/user-attachments/assets/cfe18033-e1eb-4bc9-a362-175f399a76e5)
+
 
 ## Overview
 
