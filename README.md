@@ -1,5 +1,5 @@
 # DISCLAIMER
-This tool is still in development and not yet for intended for use
+This bridge is intended for use in FLUJO but currently untested - any issues please report by openen an Github Issue
 
 # MCP Transport Bridge
 
