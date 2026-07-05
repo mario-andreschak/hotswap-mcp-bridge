@@ -1,3 +1,17 @@
+# OBSOLETE
+
+This project is obsolete and will not be maintained anymore.
+
+Please use [FLUJO](https://github.com/mario-andreschak/FLUJO/) for MCP proxying on your local machine.
+
+
+
+
+
+
+
+
+
 # DISCLAIMER
 This bridge is intended for use in [FLUJO](https://github.com/mario-andreschak/FLUJO/) but currently untested - please report any issues you encounter by opening a Github Issue
 
