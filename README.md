@@ -1,141 +1,133 @@
-# OBSOLETE
-
-This project is obsolete and will not be maintained anymore.
-
-Please use [FLUJO](https://github.com/mario-andreschak/FLUJO/) for MCP proxying on your local machine.
-
-
-
-
-
-
-
-
-
-# DISCLAIMER
-This bridge is intended for use in [FLUJO](https://github.com/mario-andreschak/FLUJO/) but currently untested - please report any issues you encounter by opening a Github Issue
-
 # MCP Transport Bridge
 
-A bridge between different MCP transport protocols that enables seamless integration with existing implementations.
-![image](https://github.com/user-attachments/assets/cfe18033-e1eb-4bc9-a362-175f399a76e5)
+Run and manage MCP child processes, expose them over authenticated HTTP, and replace their environment without dropping healthy requests. The `mcp-transport-bridge` package also connects an HTTP or explicitly selected legacy SSE MCP server to a stdio-only client.
 
+Requires Node.js 22 or later. Version 0.2 uses the MCP TypeScript SDK 2 and supports the 2026-07-28 protocol plus explicit legacy compatibility. This is a **single-owner administration service**: every holder of its token can execute configured commands and intentionally shares the same downstream servers. It is not a multi-tenant gateway or an OAuth authorization server.
 
-## Overview
+## Start the HTTP service
 
-The MCP Transport Bridge allows different MCP clients to connect to the same MCP server using different transport protocols. It also supports environment variable management and server hot-swapping.
-
-## Key Features
-
-- **Transport Protocol Bridging**: Connect clients and servers using different transport protocols (stdio, SSE, memory)
-- **Environment Variable Management**: Update server environment variables dynamically
-- **Server Hot-Swapping**: Restart servers with new environment variables while maintaining client connections
-- **API-Driven**: RESTful API for managing servers and connections
-
-## Use Cases
-
-### Scenario 1: Client B connects first, then Client A
-
-1. Client B connects to the bridge using stdio
-2. The bridge starts Server C with default environment
-3. Client A connects to the bridge and updates environment variables
-4. The bridge restarts Server C with the new environment
-5. The bridge reconnects Client B to the restarted Server C
-
-### Scenario 2: Client A connects first, then Client B
-
-1. Client A connects to the bridge and sets environment variables
-2. The bridge starts Server C with Client A's environment
-3. Client B connects to the bridge
-4. The bridge connects Client B to Server C (which already has Client A's environment)
-
-## Getting Started
-
-### Installation
-
-```bash
-npm install
-npm run build
+```sh
+npm install mcp-transport-bridge
+export MCP_BRIDGE_TOKEN="$(node -e "process.stdout.write(require('crypto').randomBytes(32).toString('hex'))")"
+npx mcp-transport-bridge --host 127.0.0.1 --port 3000
 ```
 
-### Running the Demo
+Use an environment variable or your secret manager for the token. It must contain 32–4096 characters and is required on **every** route, including health checks and MCP requests. The default listener binds to loopback. `HOST` and `PORT` can replace the command-line options. `--port 0` selects an available port; the ready message goes to stderr.
 
-```bash
-node examples/demo-workflow.js
+```sh
+curl -H "Authorization: Bearer $MCP_BRIDGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"My MCP server","transport":"stdio","command":"node","args":["/absolute/path/server.js"],"env":{"API_KEY":"replace-me"}}' \
+  http://127.0.0.1:3000/api/servers
 ```
 
-This will demonstrate the complete workflow with:
-- Starting the bridge
-- Registering Server C
-- Client B connecting to Server C via the bridge
-- Client A connecting and updating environment variables
-- Server C being restarted with the new environment
+Use the returned server ID:
 
-### Using the Bridge Launcher
-
-The bridge launcher acts as a proxy between Client B and Server C:
-
-```bash
-node examples/bridge-launcher.js --server-id <server-id> [--port <port>] [--host <host>]
+```sh
+curl -H "Authorization: Bearer $MCP_BRIDGE_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"serverId":"SERVER_UUID","transport":"http"}' \
+  http://127.0.0.1:3000/api/connections
 ```
 
-### Using Client A
+The response includes an immutable `mcpPath`, such as `/mcp/CONNECTION_UUID`. Connect an MCP HTTP client to that URL with the same bearer header. Each HTTP request is handled by the SDK with its own upstream context; client request IDs are never copied into the shared child.
 
-Client A can connect to the bridge and update environment variables:
+The service accepts exact local Host headers. Behind a reverse proxy, set `MCP_BRIDGE_ALLOWED_HOSTS=bridge.example.com` and use TLS at that proxy. Browser Origins must also match an exact allowed origin; `MCP_BRIDGE_ALLOWED_ORIGINS=https://console.example.com` adds one. Lists are comma-separated. There are no wildcard origins or permissive CORS responses.
 
-```bash
-node examples/client-a.js --server-id <server-id> [--port <port>] [--host <host>]
+## HTTP or legacy SSE to stdio
+
+Configure your stdio MCP client with:
+
+```json
+{
+  "mcpServers": {
+    "bridge": {
+      "command": "mcp-transport-bridge",
+      "args": ["--url", "http://127.0.0.1:3000/mcp/CONNECTION_UUID"],
+      "env": { "MCP_BRIDGE_TOKEN": "YOUR_ADMIN_TOKEN" }
+    }
+  }
+}
 ```
 
-## API Reference
+The installed executable works through npm's bin symlink and keeps stdout exclusively for MCP. It negotiates modern or legacy stdio clients. For a legacy SSE remote server, add `"--transport", "sse"` and use its SSE URL. SSE is never selected by guessing after an HTTP error.
 
-### Servers
+A connection created with `"transport":"sse"` returns `ssePath`. Its authenticated GET stream advertises the authenticated `/messages?sessionId=...` POST endpoint. This is deprecated legacy compatibility, not MCP v2's HTTP transport. Idle SSE sessions expire after ten minutes.
 
-- `GET /api/servers`: List all servers
-- `GET /api/servers/:id`: Get server details
-- `POST /api/servers`: Create a new server
-- `PUT /api/servers/:id`: Update a server
-- `DELETE /api/servers/:id`: Delete a server
-- `POST /api/servers/:id/start`: Start a server
-- `POST /api/servers/:id/stop`: Stop a server
-- `POST /api/servers/:id/environment`: Update server environment variables
+## Management API
 
-### Connections
+All bodies are JSON, all routes require the bearer token, and the registry is in memory.
 
-- `GET /api/connections`: List all connections
-- `GET /api/connections/:id`: Get connection details
-- `POST /api/connections`: Create a new connection
-- `DELETE /api/connections/:id`: Delete a connection
-- `POST /api/connections/:id/disconnect`: Disconnect a connection
-- `POST /api/connections/:id/reconnect`: Reconnect a connection
+| Method | Route | Behavior |
+| --- | --- | --- |
+| GET | /health | Listener health |
+| GET / POST | /api/servers | List / register servers |
+| GET / PUT / DELETE | /api/servers/:id | Read metadata / update stopped server / stop and remove |
+| POST | /api/servers/:id/start | Start explicitly |
+| POST | /api/servers/:id/stop | Stop without restarting |
+| POST | /api/servers/:id/environment | Merge a raw environment object and atomically replace a running child |
+| GET / POST | /api/connections | List / create a logical connection |
+| GET / DELETE | /api/connections/:id | Read metadata / disconnect and remove |
+| POST | /api/connections/:id/disconnect | Close this connection's frontends |
+| POST | /api/connections/:id/reconnect | Reconnect using the same connection ID and URL |
 
-## Integration Guide
+For an environment change, send `{"API_KEY":"new-value"}` directly, without an `env` wrapper. Empty string is a value; to replace the whole environment, stop the server and PUT its new `env` object. A replacement starts and negotiates successfully before it becomes active. New calls use the replacement; old calls may finish within the drain limit. Startup failure or capability changes retain the old configuration and child. Existing clients should list tools/resources/prompts again after a successful swap; change notifications are not advertised.
 
-### For Client B
+STDIO registration accepts `name`, `version`, `command`, `args`, optional `cwd`, and `env`. Only the SDK's minimal default process environment plus that explicit `env` reaches the child: the bridge's bearer token and unrelated parent secrets are not inherited.
 
-1. Configure Client B to point to the bridge launcher instead of directly to Server C
-2. The bridge launcher will handle the connection to Server C via the bridge
+Remote registration accepts `transport:"http"` or `"sse"`, `url`, and optional `headers`. Redirects are rejected. Put credentials in headers, not URL user info or query strings. Metadata responses show environment key and header names; they do not return commands, arguments, working directories, environment values or header values. Child stderr is drained without recording its contents. Tool results and resources remain application data and may contain whatever the configured server returns.
 
-### For Client A
+Configuration edits while running are rejected; use the environment endpoint for live replacement. A connection starts its server explicitly when created or reconnected. Stopped or failed children never restart automatically. Deleting a server also removes its connections.
 
-1. Connect to the bridge API
-2. Update environment variables for Server C
-3. Connect to Server C via the bridge
+## Programmatic use
 
-## Architecture
+```js
+import { createApp } from 'mcp-transport-bridge';
 
-```
-┌─────────────┐     ┌─────────────────────────────────┐     ┌─────────────┐
-│   Client A  │     │           MCP Bridge            │     │   Server C   │
-│  (SSE/WS)   │────▶│                                 │────▶│   (stdio)    │
-└─────────────┘     │  ┌─────────────┐ ┌───────────┐  │     └─────────────┘
-                    │  │Environment  │ │  Server   │  │             ▲
-┌─────────────┐     │  │  Manager    │ │ Registry  │  │             │
-│   Client B  │     │  └─────────────┘ └───────────┘  │             │
-│   (stdio)   │────▶│                                 │─────────────┘
-└─────────────┘     └─────────────────────────────────┘
+const app = createApp({ port: 3000, token: process.env.MCP_BRIDGE_TOKEN });
+const server = app.registerServer({
+  name: 'Local server', transport: 'stdio',
+  command: 'node', args: ['/absolute/path/server.js'], env: {}
+});
+const connection = await app.createConnection({ serverId: server.id, transport: 'http' });
+await app.start();
+console.log(connection.mcpPath);
+// Later: await app.updateServerEnvironment(server.id, { API_KEY: 'replacement' });
+// Shutdown: await app.stop();
 ```
 
-## License
+`App`, `createApp`, and `BridgeManager` are public exports. `registerMemoryServer(config, async env => transport)` accepts a factory returning a **new** connected client-side SDK Transport for each backend generation. This preserves in-process integration without exposing memory transport registration over REST. A `"memory"` connection can be served with `app.createMcpServer(connection.id)` and an SDK serving entry point. A stopped App cannot be restarted; construct a new instance.
 
-MIT
+Default limits: 32 registered servers, 128 connections, 64 concurrent downstream requests per server, 10-second startup, 30-second request deadline, and 5-second drain. Programmatic `limits` overrides these. HTTP accepts at most 1 MiB JSON bodies, 128 active requests and 32 SSE sessions. Shutdown aborts outstanding requests and bounds transport cleanup. The bridge forwards cancellation to the child; an uncooperative downstream implementation can continue work until its process is closed.
+
+Only core tools, resources/templates and prompts are proxied. Capability advertisements reflect these supported features. Task execution, sampling, elicitation/multi-round-trip input, roots, logging, subscriptions, list-change delivery and arbitrary server-to-client requests are not forwarded. Clients never grant additional capabilities to the shared child. This scope supports existing server tools without claiming every optional MCP feature.
+
+## Docker
+
+```sh
+docker build -t mcp-transport-bridge .
+docker run --rm -p 127.0.0.1:3000:3000 \
+  -e MCP_BRIDGE_TOKEN -e MCP_BRIDGE_ALLOWED_HOSTS=127.0.0.1:3000 \
+  mcp-transport-bridge
+```
+
+The image installs the built npm tarball and runs as the `node` user. Child commands run inside the container; install or mount their runtime and files there.
+
+## Migration from 0.1
+
+The package name and App/createApp management intent remain. Private process attachment and internal manager/event-emitter APIs are replaced by supported SDK transports; code importing those internals must use the public API above. HTTP connections use returned `mcpPath` values, while explicit legacy SSE connections use `ssePath`. The old endpoint/response-object connection setup and broken executable detection are removed. Remote-to-stdio invocation uses `--url` and optional `--transport sse`. Authentication is now mandatory for HTTP serving, and management views no longer expose credentials.
+
+## Verification
+
+```sh
+npm ci
+npm run typecheck
+npm test
+npm run test:package
+npm audit --omit=dev
+npm run test:docker
+```
+
+Tests use local fixtures and make no paid provider calls. CI covers Node 22 and 24, real child processes, modern and legacy requests, concurrent identical IDs, cancellation, atomic environment rollback/drain, authentication and metadata privacy, installed tarball/bin execution, and the built nonroot Docker image.
+
+Protocol references: [SDK v2 migration](https://ts.sdk.modelcontextprotocol.io/v2/migration/upgrade-to-v2) and [2026-07-28 support](https://ts.sdk.modelcontextprotocol.io/v2/migration/support-2026-07-28).
